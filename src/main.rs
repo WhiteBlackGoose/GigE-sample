@@ -7,6 +7,7 @@ use cameleon::{
     gige::{enumerate_cameras, register_map::Bootstrap, ControlHandle},
     DeviceControl,
 };
+use egui::{ColorImage, TextureHandle};
 use image::{ImageBuffer, Luma, Rgb};
 use tokio::{io::AsyncReadExt, runtime};
 
@@ -121,109 +122,112 @@ async fn main() {
 
     const IMG_PORT: u16 = 59998;
 
-    for (port, txt) in [(IMG_PORT, "IMG"), (9999, "MSG")] {
-        tokio::spawn(async move {
-            let sock = UdpSocket::bind(("192.168.1.3", port)).unwrap();
+    let (img_tx, img_rx) = mpsc::channel();
 
-            let mut acc_raw_data: Vec<u8> = Vec::new();
-            let mut acc_block_id = u16::MAX;
-            let mut acc_res = (0, 0);
-            loop {
-                let mut buf = [0u8; 10000];
-                let size = sock.recv(&mut buf).unwrap();
-                // tracing::debug!("{}: {:?}\n{} LEN: {}", txt, &buf[..size], txt, size);
-                tracing::debug!("{} LEN: {}", txt, size);
-                let cut = &buf[0..size];
-                let mut cursor = Cursor::new(&cut);
-                let status = cursor.read_u16().await.unwrap();
-                let block_id = cursor.read_u16().await.unwrap();
-                let ei_reserved_packet_format = cursor.read_u8().await.unwrap();
-                let ei = (ei_reserved_packet_format & 0b1000_0000) > 0;
-                let packet_format = ei_reserved_packet_format % 0b1000;
-                let mut packet_id_buf = [0; 3];
-                cursor.read_exact(&mut packet_id_buf).await.unwrap();
-                let packet_id = packet_id_buf[0] as u32 * 0x1_00_00
-                    + packet_id_buf[1] as u32 * 0x1_00
-                    + packet_id_buf[2] as u32;
-                if ei {
-                    let _block_id64 = cursor.read_u64().await.unwrap();
-                    let _packet_id32 = cursor.read_u32().await.unwrap();
-                    println!(
-                        "_block_id64: {} _packet_id32: {}",
-                        _block_id64, _packet_id32
-                    );
-                }
+    let port = IMG_PORT;
+    let txt = "IMG";
+    tokio::spawn(async move {
+        let sock = UdpSocket::bind(("192.168.1.3", port)).unwrap();
+
+        let mut acc_raw_data: Vec<u8> = Vec::new();
+        let mut acc_block_id = u16::MAX;
+        let mut acc_res = (0, 0);
+        loop {
+            let mut buf = [0u8; 10000];
+            let size = sock.recv(&mut buf).unwrap();
+            // tracing::debug!("{}: {:?}\n{} LEN: {}", txt, &buf[..size], txt, size);
+            tracing::debug!("{} LEN: {}", txt, size);
+            let cut = &buf[0..size];
+            let mut cursor = Cursor::new(&cut);
+            let status = cursor.read_u16().await.unwrap();
+            let block_id = cursor.read_u16().await.unwrap();
+            let ei_reserved_packet_format = cursor.read_u8().await.unwrap();
+            let ei = (ei_reserved_packet_format & 0b1000_0000) > 0;
+            let packet_format = ei_reserved_packet_format % 0b1000;
+            let mut packet_id_buf = [0; 3];
+            cursor.read_exact(&mut packet_id_buf).await.unwrap();
+            let packet_id = packet_id_buf[0] as u32 * 0x1_00_00
+                + packet_id_buf[1] as u32 * 0x1_00
+                + packet_id_buf[2] as u32;
+            if ei {
+                let _block_id64 = cursor.read_u64().await.unwrap();
+                let _packet_id32 = cursor.read_u32().await.unwrap();
                 println!(
-                    "Stat: {} B-ID: {} EI: {} Pack-Format: {} Pack-ID: {}",
-                    status, block_id, ei, packet_format, packet_id
+                    "_block_id64: {} _packet_id32: {}",
+                    _block_id64, _packet_id32
                 );
-                match packet_format {
-                    // Leader
-                    1 => {
-                        println!("Packet type: LEADER");
-                        let field_id_count = cursor.read_u16().await.unwrap();
-                        let payload_type = cursor.read_u16().await.unwrap();
-                        assert_eq!(payload_type, 1);
-                        let timestamp = cursor.read_u64().await.unwrap();
-                        let pixel_format = cursor.read_u32().await.unwrap();
-                        let size_x = cursor.read_u32().await.unwrap();
-                        let size_y = cursor.read_u32().await.unwrap();
-                        let offset_x = cursor.read_u32().await.unwrap();
-                        let offset_y = cursor.read_u32().await.unwrap();
-                        let padding_x = cursor.read_u16().await.unwrap();
-                        let padding_y = cursor.read_u16().await.unwrap();
-                        // BayerRG8
-                        println!("Pixel format: {:2X}", pixel_format);
-                        println!(
-                            "{}×{}+{}×{} (p: {}, {})",
-                            size_x, size_y, offset_x, offset_y, padding_x, padding_y
-                        );
-                        assert!(cursor.remaining_slice().is_empty());
-                        acc_raw_data.resize((size_x * size_y) as usize, 0);
-                        acc_block_id = block_id;
-                        acc_res = (size_x, size_y);
-                    }
-                    // Trailer
-                    2 => {
-                        println!("Packet type: TRAILER");
-                        let (w, h) = acc_res;
-                        let mut rgb = vec![0u8; acc_raw_data.len() * 3];
-                        let mut raw = Cursor::new(&acc_raw_data);
-                        let mut raster = bayer::RasterMut::new(
-                            w as usize,
-                            h as usize,
-                            bayer::RasterDepth::Depth8,
-                            &mut rgb,
-                        );
-                        bayer::demosaic(
-                            &mut raw,
-                            bayer::BayerDepth::Depth8,
-                            bayer::CFA::RGGB,
-                            bayer::Demosaic::Linear,
-                            &mut raster,
-                        )
-                        .unwrap();
-                        let buffer: ImageBuffer<Rgb<u8>, Vec<u8>> =
-                            ImageBuffer::from_vec(w, h, rgb).unwrap();
-                        buffer.save("./a.png").unwrap();
-                    }
-                    // Generic
-                    3 => {
-                        let data = cursor.remaining_slice();
-                        println!("Packet type: GENERIC {}", data.len());
-                        let target_len = acc_raw_data.len();
-                        let target = &mut acc_raw_data[(8960 * (packet_id - 1)) as usize
-                            ..((8960 * packet_id) as usize).min(target_len)];
-                        target.copy_from_slice(data);
-                    }
+            }
+            match packet_format {
+                // Leader
+                1 => {
+                    println!(
+                        "Stat: {} B-ID: {} EI: {} Pack-Format: {} Pack-ID: {}",
+                        status, block_id, ei, packet_format, packet_id
+                    );
+                    println!("Packet type: LEADER");
+                    let field_id_count = cursor.read_u16().await.unwrap();
+                    let payload_type = cursor.read_u16().await.unwrap();
+                    assert_eq!(payload_type, 1);
+                    let timestamp = cursor.read_u64().await.unwrap();
+                    let pixel_format = cursor.read_u32().await.unwrap();
+                    let size_x = cursor.read_u32().await.unwrap();
+                    let size_y = cursor.read_u32().await.unwrap();
+                    let offset_x = cursor.read_u32().await.unwrap();
+                    let offset_y = cursor.read_u32().await.unwrap();
+                    let padding_x = cursor.read_u16().await.unwrap();
+                    let padding_y = cursor.read_u16().await.unwrap();
+                    // BayerRG8
+                    println!("Pixel format: {:2X}", pixel_format);
+                    println!(
+                        "{}×{}+{}×{} (p: {}, {})",
+                        size_x, size_y, offset_x, offset_y, padding_x, padding_y
+                    );
+                    assert!(cursor.remaining_slice().is_empty());
+                    acc_raw_data.resize((size_x * size_y) as usize, 0);
+                    acc_block_id = block_id;
+                    acc_res = (size_x, size_y);
+                }
+                // Trailer
+                2 => {
+                    println!("Packet type: TRAILER");
+                    let (w, h) = acc_res;
+                    let mut rgb = vec![0u8; acc_raw_data.len() * 3];
+                    let mut raw = Cursor::new(&acc_raw_data);
+                    let mut raster = bayer::RasterMut::new(
+                        w as usize,
+                        h as usize,
+                        bayer::RasterDepth::Depth8,
+                        &mut rgb,
+                    );
+                    bayer::demosaic(
+                        &mut raw,
+                        bayer::BayerDepth::Depth8,
+                        bayer::CFA::RGGB,
+                        bayer::Demosaic::Linear,
+                        &mut raster,
+                    )
+                    .unwrap();
+                    let buffer: ImageBuffer<Rgb<u8>, Vec<u8>> =
+                        ImageBuffer::from_vec(w, h, rgb).unwrap();
+                    buffer.save("./a.png").unwrap();
+                    let _ = img_tx.send(buffer);
+                }
+                // Generic
+                3 => {
+                    let data = cursor.remaining_slice();
+                    // println!("Packet type: GENERIC {}", data.len());
+                    let target_len = acc_raw_data.len();
+                    let target = &mut acc_raw_data[(8960 * (packet_id - 1)) as usize
+                        ..((8960 * packet_id) as usize).min(target_len)];
+                    target.copy_from_slice(data);
+                }
 
-                    other => {
-                        tracing::error!("Unrecognized packet format: {}", other);
-                    }
+                other => {
+                    tracing::error!("Unrecognized packet format: {}", other);
                 }
             }
-        });
-    }
+        }
+    });
     ch.write_reg(0x80028c64, [0, 0, 0, 2]).unwrap();
     println!("AcquisitionMode: {:#?}", ch.read_reg(0x80028c64).unwrap());
     println!("TriggerMode: {:#?}", ch.read_reg(0x80028c20).unwrap());
@@ -267,7 +271,21 @@ async fn main() {
     println!("SCDA = {:?}", ch.read_reg(REG_SCDA).unwrap());
     ch.write_reg(0x80028cb0, [0, 0, 0, 1]).unwrap();
 
-    thread::sleep(std::time::Duration::from_secs(1));
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 960.0]),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "GigE example",
+        options,
+        Box::new(|cc| {
+            // This gives us image support:
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+
+            Ok(Box::new(MyApp::new(&cc.egui_ctx, img_rx)))
+        }),
+    )
+    .unwrap();
 
     ch.write_reg(0x80028cb4, [0, 0, 0, 1]).unwrap();
 
@@ -277,6 +295,7 @@ async fn main() {
     // ch.enable_streaming().unwrap();
     // ch.disable_streaming().unwrap();
     ch.close().unwrap();
+    println!("DONE");
 
     //
     //
@@ -298,4 +317,40 @@ async fn main() {
     // let socket = UdpSocket::bind("192.168.1.3:0").unwrap();
     // socket.set_broadcast(true).unwrap();
     // socket.send_to(&[0x42, ], "255.255.255.255:0").unwrap();
+}
+
+struct MyApp {
+    img_rx: mpsc::Receiver<ImageBuffer<Rgb<u8>, Vec<u8>>>,
+    handle: TextureHandle,
+}
+
+impl MyApp {
+    fn rgb2egui(rgb: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> ColorImage {
+        egui::ColorImage::from_rgb([rgb.width() as usize, rgb.height() as usize], &rgb)
+    }
+    pub fn new(ctx: &egui::Context, img_rx: mpsc::Receiver<ImageBuffer<Rgb<u8>, Vec<u8>>>) -> Self {
+        Self {
+            handle: ctx.load_texture(
+                "s",
+                Self::rgb2egui(&img_rx.recv().unwrap()),
+                egui::TextureOptions::LINEAR,
+            ),
+            img_rx,
+        }
+    }
+}
+
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let buf = self.img_rx.recv().unwrap();
+
+            let img = Self::rgb2egui(&buf);
+            self.handle.set(img, egui::TextureOptions::LINEAR);
+            let txt = egui::load::SizedTexture::from_handle(&self.handle);
+            ui.add(egui::Image::from_texture(txt).shrink_to_fit());
+
+            ctx.request_repaint();
+        });
+    }
 }
