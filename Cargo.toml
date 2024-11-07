@@ -1,0 +1,15 @@
+[package]
+name = "gige"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.89"
+cameleon = { path = "./cameleon/cameleon/" }
+cameleon-device = { path = "./cameleon/device/" }
+image = "0.25.5"
+imageproc = "0.25.0"
+tokio = { version = "1.40.0", features = ["full"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["default", "env-filter"] }
+bayer = { git = "https://github.com/virtualritz/libbayer", version = "0.2.0" }
