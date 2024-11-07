@@ -229,6 +229,9 @@ async fn main() {
         }
     });
     ch.write_reg(0x80028c64, [0, 0, 0, 2]).unwrap();
+    ch.write_reg(0x8002949c, [0, 0, 0, 2]).unwrap(); // GainAuto
+                                                     // let gain = 1.0f32;
+                                                     // ch.write_reg(0x80029668, gain.to_be_bytes()).unwrap();
     println!("AcquisitionMode: {:#?}", ch.read_reg(0x80028c64).unwrap());
     println!("TriggerMode: {:#?}", ch.read_reg(0x80028c20).unwrap());
 
