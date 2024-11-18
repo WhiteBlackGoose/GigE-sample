@@ -1,6 +1,12 @@
 // use std::net::UdpSocket;
 #![feature(cursor_remaining)]
-use std::{io::Cursor, net::UdpSocket, sync::mpsc, thread, time::Duration};
+use std::{
+    io::Cursor,
+    net::UdpSocket,
+    sync::{mpsc, Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 use anyhow::Result;
 use cameleon::{
@@ -122,7 +128,8 @@ async fn main() {
 
     const IMG_PORT: u16 = 59998;
 
-    let (img_tx, img_rx) = mpsc::channel();
+    let img = Arc::new(Mutex::new(None));
+    let img_pp = img.clone();
 
     let port = IMG_PORT;
     let txt = "IMG";
@@ -210,7 +217,7 @@ async fn main() {
                     let buffer: ImageBuffer<Rgb<u8>, Vec<u8>> =
                         ImageBuffer::from_vec(w, h, rgb).unwrap();
                     buffer.save("./a.png").unwrap();
-                    let _ = img_tx.send(buffer);
+                    *img.lock().unwrap() = Some(buffer);
                 }
                 // Generic
                 3 => {
@@ -285,7 +292,7 @@ async fn main() {
             // This gives us image support:
             egui_extras::install_image_loaders(&cc.egui_ctx);
 
-            Ok(Box::new(MyApp::new(&cc.egui_ctx, img_rx)))
+            Ok(Box::new(MyApp::new(&cc.egui_ctx, &img_pp)))
         }),
     )
     .unwrap();
@@ -322,20 +329,23 @@ async fn main() {
     // socket.send_to(&[0x42, ], "255.255.255.255:0").unwrap();
 }
 
-struct MyApp {
-    img_rx: mpsc::Receiver<ImageBuffer<Rgb<u8>, Vec<u8>>>,
+struct MyApp<'a> {
+    img_rx: &'a Mutex<Option<ImageBuffer<Rgb<u8>, Vec<u8>>>>,
     handle: TextureHandle,
 }
 
-impl MyApp {
+impl<'a> MyApp<'a> {
     fn rgb2egui(rgb: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> ColorImage {
         egui::ColorImage::from_rgb([rgb.width() as usize, rgb.height() as usize], &rgb)
     }
-    pub fn new(ctx: &egui::Context, img_rx: mpsc::Receiver<ImageBuffer<Rgb<u8>, Vec<u8>>>) -> Self {
+    pub fn new(
+        ctx: &egui::Context,
+        img_rx: &'a Mutex<Option<ImageBuffer<Rgb<u8>, Vec<u8>>>>,
+    ) -> Self {
         Self {
             handle: ctx.load_texture(
                 "s",
-                Self::rgb2egui(&img_rx.recv().unwrap()),
+                Self::rgb2egui(&ImageBuffer::from_vec(1, 1, vec![1, 1, 1]).unwrap()),
                 egui::TextureOptions::LINEAR,
             ),
             img_rx,
@@ -343,12 +353,15 @@ impl MyApp {
     }
 }
 
-impl eframe::App for MyApp {
+impl<'a> eframe::App for MyApp<'a> {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            let buf = self.img_rx.recv().unwrap();
+            let guard = self.img_rx.lock().unwrap();
+            let Some(buf) = guard.as_ref() else {
+                return;
+            };
 
-            let img = Self::rgb2egui(&buf);
+            let img = Self::rgb2egui(buf);
             self.handle.set(img, egui::TextureOptions::LINEAR);
             let txt = egui::load::SizedTexture::from_handle(&self.handle);
             ui.add(egui::Image::from_texture(txt).shrink_to_fit());
