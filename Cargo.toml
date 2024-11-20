@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.89"
-cameleon = { path = "./cameleon/cameleon/" }
+cameleon = { path = "./cameleon/cameleon/", features = ["libusb"] }
 cameleon-device = { path = "./cameleon/device/" }
 image = "0.25.5"
 imageproc = "0.25.0"
