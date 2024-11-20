@@ -1,4 +1,3 @@
-// use std::net::UdpSocket;
 #![feature(cursor_remaining)]
 use std::{io::Cursor, net::Ipv4Addr, str::FromStr};
 
