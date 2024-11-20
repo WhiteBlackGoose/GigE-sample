@@ -1,0 +1,3 @@
+[submodule "cameleon"]
+	path = cameleon
+	url = git@github.com:WhiteBlackGoose/cameleon

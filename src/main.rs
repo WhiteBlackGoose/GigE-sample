@@ -1,23 +1,14 @@
 // use std::net::UdpSocket;
 #![feature(cursor_remaining)]
-use std::{
-    io::Cursor,
-    net::{Ipv4Addr, UdpSocket},
-    str::FromStr,
-    sync::{mpsc, Arc, Mutex},
-    thread,
-    time::Duration,
-};
+use std::{io::Cursor, net::Ipv4Addr, str::FromStr};
 
-use anyhow::Result;
 use cameleon::{
-    gige::{enumerate_cameras, register_map::Bootstrap, ControlHandle, StreamHandle},
+    gige::{ControlHandle, StreamHandle},
     payload::{Payload, PayloadReceiver},
-    Camera, DeviceControl,
+    Camera,
 };
-use egui::{Button, ColorImage, TextBuffer, TextEdit, TextureHandle};
-use image::{ImageBuffer, Luma, Rgb};
-use tokio::{io::AsyncReadExt, runtime};
+use egui::{ColorImage, TextEdit, TextureHandle};
+use image::{ImageBuffer, Rgb};
 
 #[tokio::main]
 async fn main() {
