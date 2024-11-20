@@ -70,18 +70,20 @@ impl eframe::App for MyApp {
             ui.add(TextEdit::singleline(&mut self.ip_addr));
             if ui.button("Stream").clicked() && self.cam.is_none() {
                 let mut camera =
-                    cameleon::gige::enumerate_cameras(Ipv4Addr::from_str("192.168.1.3").unwrap())
+                    cameleon::gige::enumerate_cameras(Ipv4Addr::from_str(&self.ip_addr).unwrap())
                         .unwrap()
                         .swap_remove(0);
                 camera.open().unwrap();
                 camera.load_context().unwrap();
                 let mut ctxt = camera.params_ctxt().unwrap();
+
                 ctxt.node("GainAuto")
                     .unwrap()
                     .as_enumeration(&ctxt)
                     .unwrap()
                     .set_entry_by_symbolic(&mut ctxt, "Continuous")
                     .unwrap();
+
                 let prx = camera.start_streaming(3).unwrap();
                 self.cam = Some((camera, prx));
             }
