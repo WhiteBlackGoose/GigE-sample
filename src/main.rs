@@ -1,12 +1,12 @@
 #![feature(cursor_remaining)]
-use std::{io::Cursor, net::Ipv4Addr, str::FromStr};
+use std::{io::Cursor, net::Ipv4Addr, str::FromStr, time::Instant};
 
 use cameleon::{
     gige::{ControlHandle, StreamHandle},
-    payload::{Payload, PayloadReceiver},
+    payload::{ImageInfo, Payload, PayloadReceiver},
     Camera,
 };
-use egui::{ColorImage, TextEdit, TextureHandle};
+use egui::{ColorImage, Label, TextEdit, TextureHandle};
 use image::{ImageBuffer, Rgb};
 
 #[tokio::main]
@@ -32,10 +32,38 @@ async fn main() {
     .unwrap();
 }
 
+struct FpsCounter {
+    timestamp: std::time::Instant,
+    fps_count: u64,
+}
+
+impl FpsCounter {
+    fn new() -> Self {
+        Self {
+            timestamp: Instant::now(),
+            fps_count: 0,
+        }
+    }
+
+    pub fn bump(&mut self) {
+        self.fps_count += 1;
+    }
+}
+
+impl std::fmt::Display for FpsCounter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let delta = Instant::now() - self.timestamp;
+        let fps = self.fps_count as f64 / delta.as_secs_f64();
+        f.write_fmt(format_args!("{:.02}", fps))
+    }
+}
+
 struct MyApp {
     handle: TextureHandle,
     ip_addr: String,
     cam: Option<(Camera<ControlHandle, StreamHandle>, PayloadReceiver)>,
+    last_im: Option<ImageInfo>,
+    fps: Option<FpsCounter>,
 }
 
 impl MyApp {
@@ -48,6 +76,8 @@ impl MyApp {
             ),
             ip_addr: String::from_str("192.168.1.3").unwrap(),
             cam: None,
+            last_im: None,
+            fps: None,
         }
     }
 }
@@ -60,12 +90,24 @@ impl eframe::App for MyApp {
                 ui.add(TextEdit::singleline(&mut self.ip_addr));
                 if ui.button("Start").clicked() && self.cam.is_none() {
                     self.cam = Some(get_camera(Ipv4Addr::from_str(&self.ip_addr).unwrap()));
+                    self.fps = Some(FpsCounter::new());
                 }
                 if ui.button("Stop").clicked() && self.cam.is_some() {
                     let (mut cam, _) = self.cam.take().unwrap();
                     cam.stop_streaming().unwrap();
                     cam.close().unwrap();
                     self.cam = None;
+                    self.last_im = None;
+                    self.fps = None;
+                }
+                if let Some(im) = self.last_im.as_ref() {
+                    ui.add(Label::new(format!(
+                        "{}x{} {:?}",
+                        im.width, im.height, im.pixel_format
+                    )));
+                }
+                if let Some(fps) = self.fps.as_ref() {
+                    ui.add(Label::new(format!("{} fps", fps)));
                 }
             });
 
@@ -79,6 +121,10 @@ impl eframe::App for MyApp {
             let Ok(buf) = buf else {
                 return;
             };
+            if let Some(fps) = self.fps.as_mut() {
+                fps.bump();
+            }
+            self.last_im = Some(buf.image_info().unwrap().clone());
             let rgb = cameleon2rgb(buf);
             let img = rgb2egui(&rgb);
             self.handle.set(img, egui::TextureOptions::LINEAR);
