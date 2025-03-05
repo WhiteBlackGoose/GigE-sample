@@ -6,6 +6,7 @@ use cameleon::{
     payload::{ImageInfo, Payload, PayloadReceiver},
     Camera,
 };
+use cameleon_device::PixelFormat;
 use egui::{ColorImage, Label, TextEdit, TextureHandle};
 use image::{ImageBuffer, Rgb};
 
@@ -35,6 +36,7 @@ async fn main() {
 struct FpsCounter {
     timestamp: std::time::Instant,
     fps_count: u64,
+    avg: Option<f64>,
 }
 
 impl FpsCounter {
@@ -42,19 +44,27 @@ impl FpsCounter {
         Self {
             timestamp: Instant::now(),
             fps_count: 0,
+            avg: None,
         }
     }
 
     pub fn bump(&mut self) {
         self.fps_count += 1;
+        let delta = Instant::now() - self.timestamp;
+        if delta.as_secs() > 1 {
+            self.avg = Some(self.fps_count as f64 / delta.as_secs_f64());
+            self.timestamp = Instant::now();
+            self.fps_count = 0;
+        }
     }
 }
 
 impl std::fmt::Display for FpsCounter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let delta = Instant::now() - self.timestamp;
-        let fps = self.fps_count as f64 / delta.as_secs_f64();
-        f.write_fmt(format_args!("{:.02}", fps))
+        match self.avg {
+            None => f.write_str("N/A"),
+            Some(avg) => f.write_fmt(format_args!("{:.02}", avg)),
+        }
     }
 }
 
@@ -138,6 +148,7 @@ fn cameleon2rgb(buf: Payload) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
     let mut rgb = vec![0u8; buf.payload().len() * 3];
     let ii = buf.image_info().unwrap();
     assert_eq!(ii.width * ii.height, buf.payload().len());
+    assert_eq!(ii.pixel_format, PixelFormat::BayerRG8);
     let mut raster =
         bayer::RasterMut::new(ii.width, ii.height, bayer::RasterDepth::Depth8, &mut rgb);
     bayer::demosaic(
